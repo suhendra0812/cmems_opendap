@@ -2,13 +2,11 @@ library(tidync)
 library(dplyr)
 library(ncdf4)
 
-get_depth <- function(
-    data_depths, given_depth
-) {
+get_depth <- function(data_depths, given_depth) {
     # get nearest depth index
     depth_idx <- which.min(
         mapply(
-            function (x, y) abs(x-y),
+            function(x, y) abs(x - y),
             data_depths,
             given_depth
         )
@@ -19,85 +17,127 @@ get_depth <- function(
     return(depth_value)
 }
 
-get_data <- function(
-    url, variables,
-    start_date, stop_date,
-    lon_min, lon_max,
-    lat_min, lat_max,
-    depth_min, depth_max
-) {
+get_time <- function(data_times, given_time) {
+    # get nearest time index
+    time_idx <- which.min(
+        mapply(
+            function(x, y) abs(x - y),
+            data_times,
+            given_time
+        )
+    )
+    # get time value based on time index
+    time_value <- data_times[time_idx]
+
+    return(time_value)
+}
+
+get_data <- function(url,
+                     variables,
+                     start_date,
+                     stop_date,
+                     lon_min,
+                     lon_max,
+                     lat_min,
+                     lat_max,
+                     depth_min,
+                     depth_max) {
     # read opendap url
     data <- tidync::tidync(url)
 
-    # get data depth list
-    data_depths <- (
-        data %>% tidync::activate("D0") %>% tidync::hyper_array()
-    )$depth
-
-    # get nearest depth based on data depth list
-    depth_min <- get_depth(data_depths, depth_min)
-    depth_max <- get_depth(data_depths, depth_max)
-
-    # filter data based on longitude, latitude, time and depth
+    # filter data based on longitude and latitude
     data <- data %>% tidync::hyper_filter(
         longitude = dplyr::between(longitude, lon_min, lon_max),
-        latitude = dplyr::between(latitude, lat_min, lat_max),
-        time = dplyr::between(time, start_date, stop_date),
-        depth = dplyr::between(depth, depth_min, depth_max)
+        latitude = dplyr::between(latitude, lat_min, lat_max)
     )
 
-    # check if there is "sea_water_velocity" in variables,
-    # and append "uo" and "vo" if not exists
-    if ("sea_water_velocity" %in% variables) {
-        variables <- variables[!variables %in% c("sea_water_velocity")]
-        if (!"uo" %in% variables) {
-            variables <- append(variables, "uo")
-        }
-        if (!"vo" %in% variables) {
-            variables <- append(variables, "vo")
+    # filter data based on time
+    if (start_date != stop_date) {
+        data <- data %>% tidync::hyper_filter(
+            time = dplyr::between(time, start_date, stop_date)
+        )
+    } else {
+        # get data time list
+        data_times <- (
+            data %>% tidync::activate("D3") %>% tidync::hyper_array()
+        )$time
+        data <- data %>% tidync::hyper_filter(
+            time = time == get_time(data_times, start_date)
+        )
+    }
+
+    # define depth query
+    if (!any(variables %in% c("ZSD", "VHM0"))) {
+        if (depth_min != depth_max) {
+            data <- data %>% tidync::hyper_filter(
+                depth = dplyr::between(depth, depth_min, depth_max)
+            )
+        } else {
+            # get data depth list
+            data_depths <- (
+                data %>% tidync::activate("D0") %>% tidync::hyper_array()
+            )$depth
+            data <- data %>% tidync::hyper_filter(
+                depth = depth == get_depth(data_depths, depth_min)
+            )
         }
     }
 
     # convert data in tidync to dataframe and select variable
     df <- data %>% tidync::hyper_tibble(select_var = variables)
 
-    # calculate "sea_water_velocity"
-    if (any(variables %in% c("uo", "vo"))) {
-        df <- df %>% dplyr::mutate(
-            sea_water_velocity = sqrt(uo^2 + vo^2)
-        )
-    }
-
     return(df)
-
 }
 
 # read source csv
 param_df <- read.csv("./sources.csv")
 
+# define parameter list
+param_list <- list(
+    arus = "sea_water_velocity",
+    sst = "thetao",
+    salinitas = "so",
+    klorofil = "chl",
+    ph = "ph",
+    gelombang = "VHM0",
+    kecerahan = "ZSD"
+)
+
 # define parameters
-variables <- c("uo", "vo")
+parameter <- "arus"
 temporal <- "monthly"
 start_date <- as.Date("2021-01-01")
 stop_date <- Sys.Date()
 depth_min <- 0 # meter
-depth_max <- 10 # meter
+depth_max <- 0 # meter
 lon_min <- 114.35 # degree
 lon_max <- 116 # degree
 lat_min <- -8.35 # degree
 lat_max <- -7 # degree
 
-# filter parameter dataframe based on defined variables
-if (any(variables %in% c("uo", "vo", "sea_water_velocity"))) {
-    param_df <- param_df[param_df$parameter == "sea_water_velocity", ]
-} else {
-    param_df <- param_df[param_df$parameter %in% variables, ]
+if (!parameter %in% names(param_list)) {
+    stop(paste(parameter, "is not valid parameter"))
 }
 
-# filter parameter dataframe based on temporal resolution
-param_df <- param_df[param_df$temporal == temporal, ]
+variable <- param_list[[parameter]]
 
-# get initial and near-realtime date 
+if (parameter == "arus") {
+    variables <- c("uo", "vo")
+} else {
+    variables <- variable
+}
+
+# filter parameter dataframe based on defined variable
+param_df <- param_df[param_df$parameter == variable, ]
+
+# filter parameter dataframe based on temporal resolution
+if (parameter == "gelombang") {
+    param_df <- param_df[param_df$temporal == "3-hourly", ]
+} else {
+    param_df <- param_df[param_df$temporal == temporal, ]
+}
+
+# get initial and near-realtime date
 init_date <- as.Date(param_df$init_date)
 nrt_date <- as.Date(param_df$nrt_date)
 
@@ -119,7 +159,13 @@ if (start_ts < nrt_ts && stop_ts < nrt_ts) {
     url_nrt <- param_df$opendap_nrt
     urls <- append(urls, url_my)
     urls <- append(urls, url_nrt)
+} else {
+    stop("Start date must be less than stop date")
 }
+
+param_title <- param_df$title
+value_min <- param_df$value_min
+value_max <- param_df$value_max
 
 # set empty list of dataframe
 dfs <- list()
@@ -127,11 +173,16 @@ dfs <- list()
 # loop through urls and get data
 for (i in seq_along(urls)) {
     df <- get_data(
-        urls[i], variables,
-        start_ts, stop_ts,
-        lon_min, lon_max,
-        lat_min, lat_max,
-        depth_min, depth_max
+        urls[i],
+        variables,
+        start_ts,
+        stop_ts,
+        lon_min,
+        lon_max,
+        lat_min,
+        lat_max,
+        depth_min,
+        depth_max
     )
 
     # convert datetime from numeric to datetime format
@@ -149,23 +200,3 @@ for (i in seq_along(urls)) {
 
 # bind dataframe list by rows
 all_df <- dplyr::bind_rows(dfs)
-
-# get number of rows and columns
-n_rows <- length(unique(all_df$longitude))
-n_cols <- length(unique(all_df$latitude))
-
-# get xmin, xmax, ymin, ymax
-x_vals <- unique(all_df$longitude)
-x_vals <- x_vals[order(x_vals)]
-y_vals <- unique(all_df$latitude)
-y_vals <- y_vals[order(y_vals)]
-time_vals <- unique(all_df$time)
-time_vals <- time_vals[order(time_vals)]
-time_vals <- as.numeric(time_vals - as.POSIXlt(init_date)) * 24
-depth_vals <- unique(all_df$depth)
-depth_vals <- depth_vals[order(depth_vals)]
-
-x_dim <- ncdim_def("longitude", "degrees_east", x_vals)
-y_dim <- ncdim_def("latitude", "degrees_north", y_vals)
-time_dim <- ncdim_def("time", "h", time_vals)
-depth_dim <- ncdim_def("depth", "m", depth_vals)

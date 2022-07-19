@@ -93,6 +93,16 @@ if __name__ == "__main__":
     # read parameter in csv file
     param_df = pd.read_csv("./sources.csv")
 
+    param_dict = dict(
+        arus= "sea_water_velocity",
+        sst= "thetao",
+        salinitas= "so",
+        klorofil= "chl",
+        ph= "ph",
+        gelombang= "VHM0",
+        kecerahan= "ZSD",
+    )
+
     # define parameter
     parameter = "arus"
     temporal = "monthly"
@@ -105,17 +115,7 @@ if __name__ == "__main__":
     lat_min = -8.35  # degree
     lat_max = -7  # degree
 
-    param_dict = {
-        "arus": "sea_water_velocity",
-        "sst": "thetao",
-        "salinitas": "so",
-        "klorofil": "chl",
-        "ph": "ph",
-        "gelombang": "VHM0",
-        "kecerahan": "ZSD",
-    }
-
-    temporal_resample_dict = {"daily": "1D", "monthly": "1M", "annual": "1Y"}
+    temporal_resample_dict = dict(daily="1D", monthly= "1M", annual= "1Y")
 
     if not parameter in list(param_dict.keys()):
         raise ValueError(
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     else:
         variables = [variable]
 
-    # filter parameter dataframe based on defined variables
+    # filter parameter dataframe based on defined variable
     param_df = param_df[param_df["parameter"] == variable]
 
     # filter parameter dataframe based on temporal resolution
