@@ -1,7 +1,9 @@
 from datetime import datetime
 import logging
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 import metpy.calc as mpcalc
 import numpy as np
@@ -86,9 +88,11 @@ if __name__ == "__main__":
         level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     )
 
+    load_dotenv()
+
     # define username and password
-    username = "ssuhendra"
-    password = "@Kuningan08121995"
+    username = os.getenv("CMEMS_USERNAME")
+    password = os.getenv("CMEMS_PASSWORD")
 
     # read parameter in csv file
     param_df = pd.read_csv("./sources.csv")
